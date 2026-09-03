@@ -2717,13 +2717,7 @@
     }
 
     function checkAuth() {
-      const savedUser = localStorage.getItem(USER_STORAGE_KEY);
-      if (savedUser) {
-        loggedInUser = savedUser;
-        updateUserDisplay();
-        document.getElementById('login-page').style.display = 'none';
-        document.getElementById('dashboard-layout').style.display = 'block';
-      }
+      // لا يتم تسجيل الدخول تلقائياً؛ يجب على المستخدم إدخال بيانات الدخول في كل مرة
     }
 
     function updateUserDisplay() {
