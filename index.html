@@ -2349,7 +2349,7 @@
        1. إدارة IndexedDB وقواعد البيانات المحلية المتطورة
        ============================================================== */
     const DB_NAME = 'SuluqExamsDB_v5';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     let dbInstance = null;
 
     // مفاتيح التخزين للإعدادات السريعة
@@ -2381,6 +2381,29 @@
             stStore.createIndex('academicYear', 'academicYear', { unique: false });
             stStore.createIndex('certType', 'certType', { unique: false });
             stStore.createIndex('round', 'round', { unique: false });
+            stStore.createIndex('seatYearUnique', ['seatNo', 'academicYear'], { unique: true });
+          } else {
+            // الإصدار 2: فرض عدم تكرار رقم الجلوس داخل نفس العام الدراسي.
+            const stStore = e.target.transaction.objectStore('students');
+            if (!stStore.indexNames.contains('seatYearUnique')) {
+              // تنظيف أي سجلات مكررة قديمة قبل إنشاء الفهرس الفريد.
+              const seen = new Set();
+              const reqAll = stStore.getAll();
+              reqAll.onsuccess = function() {
+                const records = reqAll.result || [];
+                records.forEach(st => {
+                  const key = `${String(st.seatNo || '').trim()}||${normalizeAcademicYear(st.academicYear)}`;
+                  if (seen.has(key)) {
+                    stStore.delete(st.id);
+                  } else {
+                    seen.add(key);
+                  }
+                });
+                if (!stStore.indexNames.contains('seatYearUnique')) {
+                  stStore.createIndex('seatYearUnique', ['seatNo', 'academicYear'], { unique: true });
+                }
+              };
+            }
           }
           if (!db.objectStoreNames.contains('audit_logs')) {
             const logStore = db.createObjectStore('audit_logs', { keyPath: 'id', autoIncrement: true });
@@ -2857,6 +2880,38 @@
       field.value = `${Math.floor(4000000 + Math.random() * 900000)}`;
     }
 
+    // مفتاح فريد للطالب: رقم الجلوس + العام الدراسي.
+    // يسمح بتكرار رقم الجلوس في أعوام مختلفة، ويمنعه داخل العام نفسه.
+    function studentUniqueKey(seatNo, academicYear) {
+      return `${String(seatNo ?? '').trim()}||${normalizeAcademicYear(academicYear)}`;
+    }
+
+    function findStudentDuplicate(seatNo, academicYear, excludeId = '') {
+      const key = studentUniqueKey(seatNo, academicYear);
+      return studentsCache.find(s => s.id !== excludeId && studentUniqueKey(s.seatNo, s.academicYear) === key) || null;
+    }
+
+    // إزالة التكرار من أي مجموعة مستوردة، مع الاحتفاظ بأول سجل فقط.
+    function dedupeStudentsBySeatYear(records) {
+      const seen = new Set();
+      const unique = [];
+      const duplicates = [];
+      for (const record of records || []) {
+        const key = studentUniqueKey(record.seatNo, record.academicYear);
+        if (!String(record.seatNo ?? '').trim() || !normalizeAcademicYear(record.academicYear)) {
+          duplicates.push({ record, reason: 'بيانات أساسية ناقصة' });
+          continue;
+        }
+        if (seen.has(key)) {
+          duplicates.push({ record, reason: 'مكرر داخل الملف' });
+          continue;
+        }
+        seen.add(key);
+        unique.push(record);
+      }
+      return { unique, duplicates };
+    }
+
     // حفظ / تعديل بيانات الطالب في IndexedDB
     async function saveStudent(e) {
       e.preventDefault();
@@ -2883,6 +2938,12 @@
         recordNo: `18-2026-${Math.floor(10000000 + Math.random() * 90000000)}`,
         printedCount: 0
       };
+
+      const duplicate = findStudentDuplicate(studentData.seatNo, studentData.academicYear, editId);
+      if (duplicate) {
+        alert(`لا يمكن حفظ الطالب.\n\nرقم الجلوس ${studentData.seatNo} مستخدم بالفعل في العام الدراسي ${studentData.academicYear}.\n\nالطالب المسجل: ${duplicate.name}`);
+        return;
+      }
 
       await idbPut('students', studentData);
 
@@ -3596,10 +3657,20 @@
           }
 
           if (importedStudents.length > 0) {
-            await idbBulkPut('students', importedStudents);
+            const { unique: fileUnique, duplicates: fileDuplicates } = dedupeStudentsBySeatYear(importedStudents);
+            const existingKeys = new Set(studentsCache.map(s => studentUniqueKey(s.seatNo, s.academicYear)));
+            const newStudents = fileUnique.filter(st => !existingKeys.has(studentUniqueKey(st.seatNo, st.academicYear)));
+            const existingDuplicates = fileUnique.length - newStudents.length;
+
+            if (newStudents.length === 0) {
+              alert(`لم تتم إضافة أي طالب.\n\nكل السجلات المستوردة موجودة مسبقًا أو مكررة داخل الملف.\n\nالمكرر داخل الملف: ${fileDuplicates.length}\nالموجود مسبقًا: ${existingDuplicates}`);
+              return;
+            }
+
+            await idbBulkPut('students', newStudents);
             await reloadAllDataFromDB();
-            await logOperation('استيراد إكسل', `تم استيراد ${importedStudents.length} طالب بنجاح وتخزينهم في قاعدة البيانات`, 'import');
-            alert(`تم استيراد ${importedStudents.length} طالب بنجاح في قاعدة البيانات!`);
+            await logOperation('استيراد إكسل', `تم استيراد ${newStudents.length} طالبًا جديدًا، وتجاهل ${fileDuplicates.length + existingDuplicates} سجل مكرر`, 'import');
+            alert(`تم الاستيراد بنجاح.\n\nتمت إضافة: ${newStudents.length} طالب\nتم تجاهل المكرر داخل الملف: ${fileDuplicates.length}\nتم تجاهل الموجود مسبقًا: ${existingDuplicates}`);
             switchTab('students-list');
           }
 
@@ -3701,14 +3772,27 @@
             return;
           }
 
-          if (confirm(`تم العثور على ${studentsToLoad.length} طالب في ملف النسخة الاحتياطية. هل ترغب في استعادتها وحفظها مباشرة؟`)) {
-            await idbBulkPut('students', studentsToLoad);
+          const { unique: backupUnique, duplicates: backupDuplicates } = dedupeStudentsBySeatYear(studentsToLoad);
+          if (backupUnique.length === 0 && studentsToLoad.length > 0) {
+            alert('لم تتم الاستعادة لأن ملف النسخة الاحتياطية لا يحتوي على سجلات طلاب صالحة.');
+            return;
+          }
+
+          const duplicateMsg = backupDuplicates.length > 0
+            ? `\n\nتنبيه: تم اكتشاف ${backupDuplicates.length} سجل مكرر/غير صالح داخل الملف وسيتم تجاهله.`
+            : '';
+
+          if (confirm(`تم العثور على ${backupUnique.length} طالب صالح في ملف النسخة الاحتياطية.${duplicateMsg}\n\n⚠️ الاستعادة الكاملة ستستبدل بيانات الطلبة الحالية بهذه النسخة.\nإذا استعدت نفس الملف مرة أخرى، فلن تتضاعف الأسماء.`)) {
+            // النسخة الاحتياطية الشاملة تمثل حالة كاملة؛ لذلك نستبدل البيانات بدل إضافتها.
+            await idbClear('students');
+            await idbBulkPut('students', backupUnique);
+            await idbClear('audit_logs');
             if (logsToLoad.length > 0) {
               await idbBulkPut('audit_logs', logsToLoad);
             }
             await reloadAllDataFromDB();
-            await logOperation('استرجاع نسخة احتياطية', `تمت استعادة ${studentsToLoad.length} طالب بنجاح من ملف JSON محلي`, 'import');
-            alert(`تمت استعادة البيانات بنجاح وبدون اتصال بالإنترنت! إجمالي الطلبة الآن: ${studentsCache.length}`);
+            await logOperation('استرجاع نسخة احتياطية', `تمت استعادة ${backupUnique.length} طالبًا من ملف JSON، مع تجاهل ${backupDuplicates.length} سجل مكرر/غير صالح`, 'import');
+            alert(`تمت استعادة النسخة الاحتياطية بنجاح.\n\nإجمالي الطلبة الآن: ${studentsCache.length}\nتم تجاهل المكرر/غير الصالح داخل النسخة: ${backupDuplicates.length}`);
             switchTab('students-list');
           }
         } catch (err) {
