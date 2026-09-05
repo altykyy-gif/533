@@ -1635,9 +1635,17 @@
 
                 <!-- رقم القيد -->
                 <div class="form-group">
-                  <label class="form-label">رقم القيد / التسجيل *</label>
+                  <label class="form-label">رقم القيد *</label>
                   <div class="input-wrapper">
-                    <input type="text" id="field-reg-no" placeholder="مثال: 4986340" required>
+                    <input type="text" id="field-reg-no" placeholder="أدخل رقم القيد" required autocomplete="off" inputmode="numeric">
+                  </div>
+                </div>
+
+                <!-- رقم التسجيل (يُولّد تلقائياً) -->
+                <div class="form-group">
+                  <label class="form-label">رقم التسجيل</label>
+                  <div class="input-wrapper">
+                    <input type="text" id="field-registration-no" readonly aria-readonly="true" style="background: rgba(0,0,0,0.04); font-weight: bold; cursor: not-allowed;" title="يتم توليد رقم التسجيل تلقائياً">
                   </div>
                 </div>
 
@@ -2512,7 +2520,7 @@
       await migrateLocalStorageToIndexedDB();
       await reloadAllDataFromDB();
       checkAuth();
-      generateNextRegNumber();
+      generateNextRegistrationNumber();
       updateDashboardStats();
     });
 
@@ -2822,6 +2830,14 @@
       }
     }
 
+    function prepareNewStudentRegistration() {
+      const editId = document.getElementById('edit-student-id')?.value || '';
+      const field = document.getElementById('field-registration-no');
+      if (field && !editId && !String(field.value || '').trim()) {
+        field.value = generateUniqueRegistrationNumber();
+      }
+    }
+
     function switchTab(tabId) {
       document.querySelectorAll('.app-section').forEach(s => s.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -2875,9 +2891,41 @@
       else app.value = 'مقبول';
     }
 
-    function generateNextRegNumber() {
-      const field = document.getElementById('field-reg-no');
-      field.value = `${Math.floor(4000000 + Math.random() * 900000)}`;
+    function generateUniqueRegistrationNumber(reserved = new Set()) {
+      const used = new Set(studentsCache.map(s => String(s.registrationNo || '').trim()).filter(Boolean));
+      for (let attempt = 0; attempt < 1000; attempt++) {
+        const candidate = String(Math.floor(10000000 + Math.random() * 90000000));
+        if (!used.has(candidate) && !reserved.has(candidate)) return candidate;
+      }
+      return `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    }
+
+    function generateNextRegistrationNumber() {
+      const field = document.getElementById('field-registration-no');
+      if (field) field.value = generateUniqueRegistrationNumber();
+    }
+
+    function findRegistrationDuplicate(regNo, excludeId = '') {
+      const key = String(regNo ?? '').trim();
+      if (!key) return null;
+      return studentsCache.find(s => s.id !== excludeId && String(s.regNo ?? '').trim() === key) || null;
+    }
+
+    async function ensureRegistrationNumbers() {
+      const used = new Set();
+      const updates = [];
+      for (const st of studentsCache) {
+        const current = String(st.registrationNo || '').trim();
+        if (current && !used.has(current)) {
+          used.add(current);
+          continue;
+        }
+        const generated = generateUniqueRegistrationNumber(used);
+        st.registrationNo = generated;
+        used.add(generated);
+        updates.push(st);
+      }
+      if (updates.length) await idbBulkPut('students', updates);
     }
 
     // مفتاح فريد للطالب: رقم الجلوس + العام الدراسي.
@@ -2928,6 +2976,7 @@
         grade: document.getElementById('field-grade').value,
         seatNo: document.getElementById('field-seat-no').value.trim(),
         regNo: document.getElementById('field-reg-no').value.trim(),
+        registrationNo: document.getElementById('field-registration-no').value.trim() || generateUniqueRegistrationNumber(),
         name: document.getElementById('field-student-name').value.trim(),
         enrollmentType: document.getElementById('field-enrollment-type').value,
         round: document.getElementById('field-round').value,
@@ -2942,6 +2991,12 @@
       const duplicate = findStudentDuplicate(studentData.seatNo, studentData.academicYear, editId);
       if (duplicate) {
         alert(`لا يمكن حفظ الطالب.\n\nرقم الجلوس ${studentData.seatNo} مستخدم بالفعل في العام الدراسي ${studentData.academicYear}.\n\nالطالب المسجل: ${duplicate.name}`);
+        return;
+      }
+
+      const duplicateRegNo = findRegistrationDuplicate(studentData.regNo, editId);
+      if (duplicateRegNo) {
+        alert(`لا يمكن حفظ الطالب.\n\nرقم القيد ${studentData.regNo} مستخدم بالفعل ولا يجوز تكراره في أي عام دراسي.\n\nالطالب المسجل: ${duplicateRegNo.name}`);
         return;
       }
 
@@ -2971,6 +3026,7 @@
       document.getElementById('form-panel-title').textContent = 'إضافة طالب جديد للبيانات';
       handleCertTypeChange();
       generateNextRegNumber();
+      generateNextRegistrationNumber();
     }
 
     function editStudent(id) {
@@ -2989,6 +3045,7 @@
 
       document.getElementById('field-seat-no').value = st.seatNo;
       document.getElementById('field-reg-no').value = st.regNo;
+      document.getElementById('field-registration-no').value = st.registrationNo || generateUniqueRegistrationNumber();
       document.getElementById('field-student-name').value = st.name;
       document.getElementById('field-enrollment-type').value = st.enrollmentType || 'نظامي';
       document.getElementById('field-round').value = st.round || 'الأول';
@@ -3574,12 +3631,12 @@
        ============================================================== */
     function downloadExcelTemplate() {
       const headers = [
-        ['رقم الجلوس', 'اسم الطالب الرباعي واللقب', 'صفة القيد (نظامي/منازل/تكميلي)', 'نوع الشهادة (أساسي/ثانوي)', 'القسم (علمي/أدبي/عام)', 'الدور (الأول/الثاني)', 'العام الدراسي (مثال: 2025 - 2026)', 'اسم المدرسة', 'المجموع الكلي', 'النسبة المئوية', 'التقدير']
+        ['رقم الجلوس', 'رقم القيد', 'اسم الطالب الرباعي واللقب', 'صفة القيد (نظامي/منازل/تكميلي)', 'نوع الشهادة (أساسي/ثانوي)', 'القسم (علمي/أدبي/عام)', 'الدور (الأول/الثاني)', 'العام الدراسي (مثال: 2025 - 2026)', 'اسم المدرسة', 'المجموع الكلي', 'النسبة المئوية', 'التقدير']
       ];
       
       const sampleRow = [
-        ['408973', 'سراج الدين طارق عمر محمد', 'نظامي', 'ثانوي', 'القسم الأدبي', 'الأول', '2025 - 2026', '31612 شيخ الشهداء للتعليم الثانوي', '964.00', '77.74', 'جيد جدا'],
-        ['528879', 'ابراهيم نوح عبدالله نوح', 'نظامي', 'ثانوي', 'القسم العلمي', 'الأول', '2025 - 2026', '31612 شيخ الشهداء للتعليم الثانوي', '1155.00', '90.23', 'ممتاز']
+        ['408973', '4986340', 'سراج الدين طارق عمر محمد', 'نظامي', 'ثانوي', 'القسم الأدبي', 'الأول', '2025 - 2026', '31612 شيخ الشهداء للتعليم الثانوي', '964.00', '77.74', 'جيد جدا'],
+        ['528879', '4986341', 'ابراهيم نوح عبدالله نوح', 'نظامي', 'ثانوي', 'القسم العلمي', 'الأول', '2025 - 2026', '31612 شيخ الشهداء للتعليم الثانوي', '1155.00', '90.23', 'ممتاز']
       ];
 
       const ws = XLSX.utils.aoa_to_sheet([...headers, ...sampleRow]);
@@ -3611,30 +3668,32 @@
             if (!r || r.length === 0 || !r[1]) continue;
 
             const seatNo = String(r[0] || '').trim();
-            const name = String(r[1] || '').trim();
-            const enrollRaw = String(r[2] || '');
+            const regNo = String(r[1] || '').trim();
+            const name = String(r[2] || '').trim();
+            if (!regNo) continue;
+            const enrollRaw = String(r[3] || '');
             let enrollType = 'نظامي';
             if (enrollRaw.includes('منازل')) enrollType = 'منازل';
             else if (enrollRaw.includes('تكميل')) enrollType = 'تكميلي';
 
-            const rawCert = String(r[3] || '');
+            const rawCert = String(r[4] || '');
             const certType = rawCert.includes('ثانوي') ? 'شهادة إتمام مرحلة التعليم الثانوي' : 'شهادة إتمام مرحلة التعليم الأساسي';
             
             let section = 'عام';
             let grade = 'التاسع';
             if (certType === 'شهادة إتمام مرحلة التعليم الثانوي') {
-              const rawSec = String(r[4] || '');
+              const rawSec = String(r[5] || '');
               section = rawSec.includes('أدبي') ? 'القسم الأدبي' : 'القسم العلمي';
               grade = section === 'القسم العلمي' ? 'الثالث ثانوي (12) علمي' : 'الثالث ثانوي (12) أدبي';
             }
 
-            const round = (String(r[5] || '').includes('الثاني')) ? 'الثاني' : 'الأول';
-            const year = normalizeAcademicYear(r[6]);
-            const school = String(r[7] || 'مكتب الامتحانات سلوق').trim();
-            const marks = String(r[8] || '-').trim();
+            const round = (String(r[6] || '').includes('الثاني')) ? 'الثاني' : 'الأول';
+            const year = normalizeAcademicYear(r[7]);
+            const school = String(r[8] || 'مكتب الامتحانات سلوق').trim();
+            const marks = String(r[9] || '-').trim();
             
-            const pct = parsePercentageSmart(r[9]);
-            const appreciation = String(r[10] || (pct >= 85 ? 'ممتاز' : pct >= 75 ? 'جيد جداً' : pct >= 65 ? 'جيد' : 'مقبول')).trim();
+            const pct = parsePercentageSmart(r[10]);
+            const appreciation = String(r[11] || (pct >= 85 ? 'ممتاز' : pct >= 75 ? 'جيد جداً' : pct >= 65 ? 'جيد' : 'مقبول')).trim();
 
             importedStudents.push({
               id: 'std_' + (Date.now() + i),
@@ -3643,7 +3702,8 @@
               section: section,
               grade: grade,
               seatNo: seatNo,
-              regNo: seatNo,
+              regNo: regNo,
+              registrationNo: generateUniqueRegistrationNumber(new Set(importedStudents.map(st => st.registrationNo))),
               name: name,
               enrollmentType: enrollType,
               round: round,
@@ -3689,6 +3749,7 @@
       const exportData = studentsCache.map((s, idx) => ({
         'ت': idx + 1,
         'رقم القيد': s.regNo,
+        'رقم التسجيل': s.registrationNo || '',
         'رقم الجلوس': s.seatNo,
         'اسم الطالب': s.name,
         'نوع الشهادة': s.certType,
