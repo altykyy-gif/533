@@ -2661,7 +2661,7 @@
               </div>
               <div style="display:flex; gap:10px;">
                 <button type="button" class="btn btn-secondary" id="institution-manage-button" hidden onclick="openInstitutionManager()">
-                  <i class="fa-solid fa-school"></i> تعديل أسماء المؤسسات
+                  <i class="fa-solid fa-school"></i> تعديل ودمج المؤسسات
                 </button>
                 <button class="btn btn-primary" onclick="openResultsSheetModal()">
                   <i class="fa-solid fa-print"></i> كشف نتائج أفقي A4
@@ -5221,11 +5221,19 @@
 <div id="institution-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="institution-title" dir="rtl">
   <div class="institution-panel">
     <div class="institution-header">
-      <h3 id="institution-title"><i class="fa-solid fa-school"></i> تعديل أسماء المؤسسات</h3>
+      <h3 id="institution-title"><i class="fa-solid fa-school"></i> تعديل ودمج أسماء المؤسسات</h3>
       <button type="button" class="btn btn-secondary" onclick="closeInstitutionManager()" aria-label="إغلاق تعديل المؤسسات">إغلاق</button>
     </div>
-    <p class="institution-help">اختر السنة والمؤسسة، ثم اكتب الاسم الصحيح. يتغيّر الاسم في سجلات الطلبة والقوائم والإفادات ضمن النطاق المختار.</p>
+    <p class="institution-help">يمكنك تصحيح اسم مؤسسة، أو دمج تسمياتها المختلفة تحت اسم مسجّل واحد. يتغيّر الاسم في سجلات الطلبة والقوائم والإفادات ضمن النطاق المختار.</p>
     <form id="institution-form" onsubmit="saveInstitutionRename(event)">
+      <div class="form-group">
+        <label class="form-label" for="institution-operation">نوع العملية</label>
+        <select id="institution-operation" onchange="onInstitutionOperationChange()">
+          <option value="rename">تعديل اسم المؤسسة</option>
+          <option value="merge">دمج مع مؤسسة مسجّلة</option>
+        </select>
+        <p id="institution-operation-help" class="institution-help"></p>
+      </div>
       <div class="form-group">
         <label class="form-label" for="institution-year">نطاق التعديل</label>
         <select id="institution-year" onchange="onInstitutionYearChange()"></select>
@@ -5235,14 +5243,15 @@
         <select id="institution-current-name" required onchange="onInstitutionChoiceChange()"></select>
       </div>
       <div class="form-group">
-        <label class="form-label" for="institution-new-name">الاسم الصحيح للمؤسسة *</label>
-        <input id="institution-new-name" type="text" required maxlength="200" autocomplete="off" oninput="updateInstitutionRenamePreview()" placeholder="اكتب اسم المؤسسة هنا">
+        <label class="form-label" id="institution-new-name-label" for="institution-new-name">الاسم الصحيح للمؤسسة *</label>
+        <input id="institution-new-name" type="text" required maxlength="200" autocomplete="off" list="institution-known-names" oninput="updateInstitutionRenamePreview()" placeholder="اكتب اسم المؤسسة هنا">
+        <datalist id="institution-known-names"></datalist>
       </div>
       <p id="institution-preview" class="institution-preview" aria-live="polite"></p>
       <p class="institution-help">تُحفظ نسخة احتياطية تلقائيًا قبل التعديل. الأرقام والدرجات وبقية بيانات الطلبة تبقى كما هي.</p>
       <p id="institution-status" role="status" aria-live="polite" hidden></p>
       <div class="institution-actions">
-        <button id="institution-save-button" type="submit" class="btn btn-primary" disabled><i class="fa-solid fa-floppy-disk"></i> حفظ تعديل الاسم</button>
+        <button id="institution-save-button" type="submit" class="btn btn-primary" disabled><i class="fa-solid fa-floppy-disk"></i> <span id="institution-save-label">حفظ تعديل الاسم</span></button>
         <button type="button" class="btn btn-secondary" onclick="closeInstitutionManager()">إلغاء</button>
         <button id="institution-backup-button" type="button" class="btn btn-success" hidden onclick="downloadInstitutionRenameBackup()"><i class="fa-solid fa-download"></i> تنزيل نسخة قبل آخر تعديل</button>
       </div>
@@ -5871,7 +5880,7 @@ function openResultsSheetModal(){
   generateResultsSheet();document.getElementById('sheet-modal').style.display='flex';
 }
 
-/* Rename institutions by updating only school, within one backed-up transaction. */
+/* Rename or merge institutions by updating only school, in a backed-up transaction. */
 const INSTITUTION_BACKUP_KEY='institution_rename_backup_latest';
 let institutionRenameSnapshot=[],institutionRenameBackup=null,institutionRenameSaving=false;
 let institutionManagerReturnFocus=null;
@@ -5892,22 +5901,48 @@ function institutionNameError(raw){
   return '';
 }
 function institutionRenamePlan(){
+  const operation=document.getElementById('institution-operation').value;
   const year=document.getElementById('institution-year').value;
   const oldName=document.getElementById('institution-current-name').value;
   const raw=document.getElementById('institution-new-name').value;
   const newName=raw.trim().replace(/\s+/g,' ');
   const targets=institutionRenameSnapshot.filter(st=>institutionInScope(st,year)&&institutionSchool(st)===oldName);
+  const destination=institutionRenameSnapshot.filter(st=>institutionSchool(st)===newName);
   let error=!oldName?'اختر المؤسسة المراد تعديلها.':institutionNameError(raw);
   if(!error&&newName===oldName)error='اكتب اسمًا مختلفًا عن الاسم الحالي.';
   if(!error&&!targets.length)error='لا توجد سجلات لهذه المؤسسة في النطاق المختار.';
-  if(!error&&institutionRenameSnapshot.some(st=>institutionInScope(st,year)&&institutionSchool(st)===newName))error='توجد مؤسسة بهذا الاسم في النطاق المختار. اختر اسمًا مختلفًا لتجنب دمج المؤسستين.';
-  return {year,oldName,newName,expectedIds:targets.map(st=>st.id),error};
+  if(!error&&operation==='merge'&&!destination.length)error='للدمج، اختر الاسم الموحّد من أسماء المؤسسات المسجلة أو اكتبه مطابقًا لها.';
+  if(!error&&operation!=='merge'&&destination.some(st=>institutionInScope(st,year)))error='توجد مؤسسة بهذا الاسم في النطاق المختار. اختر «دمج مع مؤسسة مسجّلة» لتوحيد الاسمين.';
+  return {operation,year,oldName,newName,expectedIds:targets.map(st=>st.id),expectedDestinationIds:destination.map(st=>st.id),error};
+}
+function institutionYearsSummary(records){
+  const counts=new Map();for(const st of records){const year=st.academicYear||'سنة غير محددة';counts.set(year,(counts.get(year)||0)+1);}
+  return [...counts].sort(([a],[b])=>a.localeCompare(b)).map(([year,count])=>`${year} (${count} سجل)`).join('، ');
+}
+function refreshInstitutionNameSuggestions(){
+  const list=document.getElementById('institution-known-names');list.replaceChildren();
+  for(const name of institutionNames(institutionRenameSnapshot,'')){const option=document.createElement('option');option.value=name;list.appendChild(option);}
+}
+function onInstitutionOperationChange(){
+  const merge=document.getElementById('institution-operation').value==='merge';
+  document.getElementById('institution-new-name-label').textContent=merge?'الاسم الموحّد المسجّل للمؤسسة *':'الاسم الصحيح للمؤسسة *';
+  document.getElementById('institution-new-name').placeholder=merge?'اختر الاسم المعتمد من الاقتراحات أو اكتبه مطابقًا':'اكتب اسم المؤسسة هنا';
+  document.getElementById('institution-save-label').textContent=merge?'حفظ دمج الاسمين':'حفظ تعديل الاسم';
+  document.getElementById('institution-operation-help').textContent=merge?'لدمج تسميات المؤسسة بين السنوات، اختر «كل الأعوام»، وحدّد الاسم المراد دمجه ثم الاسم الموحّد. يُحتفظ بكل سجلات الطلبة وسنواتهم.':'لتصحيح الاسم، حدّد المؤسسة واكتب الاسم الجديد. يمكنك اختيار الدمج إذا كان الاسم الصحيح مسجّلًا بالفعل.';
+  institutionStatus('');updateInstitutionRenamePreview();
 }
 function updateInstitutionRenamePreview(){
   const plan=institutionRenamePlan(),input=document.getElementById('institution-new-name');
   input.setCustomValidity(plan.error&&plan.oldName?plan.error:'');
   const preview=document.getElementById('institution-preview');
-  preview.textContent=plan.oldName?`السنة: ${plan.year||'كل الأعوام'}\nعدد سجلات الطلبة المشمولة: ${plan.expectedIds.length}\nالاسم الحالي: ${plan.oldName}${plan.newName&&plan.newName!==plan.oldName?'\nالاسم الجديد: '+plan.newName:''}${plan.error?'\n'+plan.error:''}`:'اختر المؤسسة لعرض عدد سجلاتها.';
+  let text=plan.oldName?`السنة: ${plan.year||'كل الأعوام'}\nعدد سجلات الطلبة المشمولة: ${plan.expectedIds.length}\nالاسم الحالي: ${plan.oldName}${plan.newName&&plan.newName!==plan.oldName?'\n'+(plan.operation==='merge'?'الاسم الموحّد: ':'الاسم الجديد: ')+plan.newName:''}`:'اختر المؤسسة لعرض عدد سجلاتها.';
+  if(plan.operation==='merge'&&plan.oldName&&plan.newName!==plan.oldName&&plan.expectedDestinationIds.length){
+    const source=institutionRenameSnapshot.filter(st=>institutionInScope(st,plan.year)&&institutionSchool(st)===plan.oldName);
+    const destination=institutionRenameSnapshot.filter(st=>institutionSchool(st)===plan.newName);
+    text+=`\nسنوات الاسم المراد دمجه ضمن النطاق: ${institutionYearsSummary(source)}\nالاسم الموحّد مسجّل في: ${institutionYearsSummary(destination)}\nالسجلات الموجودة بالاسم الموحّد: ${destination.length}\nإجمالي سجلات المؤسسة بعد الدمج في كل الأعوام: ${source.length+destination.length}`;
+  }
+  if(plan.oldName&&plan.error)text+='\n'+plan.error;
+  preview.textContent=text;
   document.getElementById('institution-save-button').disabled=institutionRenameSaving||!!plan.error;
   return plan;
 }
@@ -5938,7 +5973,9 @@ async function openInstitutionManager(){
     const selectedYear=document.getElementById('filter-year').value;
     if(selectedYear&&!years.includes(selectedYear))years.unshift(selectedYear);
     fillSelect('institution-year',years,'كل الأعوام');document.getElementById('institution-year').value=selectedYear;
+    document.getElementById('institution-operation').value='rename';refreshInstitutionNameSuggestions();
     onInstitutionYearChange(document.getElementById('filter-school').value);
+    onInstitutionOperationChange();
     document.getElementById('institution-backup-button').hidden=!institutionRenameBackup;
     institutionManagerReturnFocus=document.activeElement;
     document.getElementById('institution-modal').style.display='flex';
@@ -5953,6 +5990,9 @@ function renameInstitutionAtomically(plan){
   return new Promise((resolve,reject)=>{
     if(!loggedInUser||!isManager())return reject(new Error('تعديل أسماء المؤسسات متاح لمدير المكتب فقط.'));
     if(!dbInstance)return reject(new Error('قاعدة البيانات غير متاحة. أعد فتح المنظومة.'));
+    const operation=plan.operation||'rename';
+    if(!['rename','merge'].includes(operation))return reject(new Error('نوع العملية غير صالح.'));
+    if(operation==='merge'&&!Array.isArray(plan.expectedDestinationIds))return reject(new Error('راجع معاينة الدمج قبل الحفظ.'));
     const nameError=institutionNameError(plan.newName);
     if(nameError||!plan.oldName||plan.oldName===plan.newName||!plan.expectedIds?.length)return reject(new Error(nameError||'لا توجد تعديلات صالحة للحفظ.'));
     const tx=dbInstance.transaction(['students','settings','audit_logs'],'readwrite'),store=tx.objectStore('students');
@@ -5966,15 +6006,20 @@ function renameInstitutionAtomically(plan){
       try{
         if(!loggedInUser||!isManager())throw new Error('تعديل أسماء المؤسسات متاح لمدير المكتب فقط.');
         const targets=records.filter(st=>institutionInScope(st,plan.year)&&institutionSchool(st)===plan.oldName);
+        const destination=records.filter(st=>institutionSchool(st)===plan.newName);
         const ids=items=>items.map(id=>JSON.stringify(id)).sort();
         if(JSON.stringify(ids(targets.map(st=>st.id)))!==JSON.stringify(ids(plan.expectedIds)))throw new Error('تغيّرت سجلات المؤسسة منذ المعاينة. راجع العدد ثم احفظ التعديل مجددًا.');
-        if(records.some(st=>institutionInScope(st,plan.year)&&institutionSchool(st)===plan.newName))throw new Error('توجد مؤسسة بهذا الاسم في النطاق المختار. لم يُحفظ التعديل لتجنب دمج المؤسستين.');
+        if(operation==='merge'){
+          if(!destination.length)throw new Error('الاسم الموحّد لم يعد مسجّلًا. راجع معاينة الدمج مجددًا.');
+          if(JSON.stringify(ids(destination.map(st=>st.id)))!==JSON.stringify(ids(plan.expectedDestinationIds)))throw new Error('تغيّرت سجلات الاسم الموحّد منذ المعاينة. راجع أعداد الدمج ثم احفظ مجددًا.');
+        }else if(destination.some(st=>institutionInScope(st,plan.year)))throw new Error('توجد مؤسسة بهذا الاسم في النطاق المختار. اختر عملية الدمج لتوحيد الاسمين.');
         const now=new Date().toISOString();
-        const backup={app:'منظومة إصدار الوثائق - مكتب الامتحانات سلوق',version:'5.0',exportDate:now,totalStudents:records.length,students:records,auditLogs:logs,meta:{reason:'قبل تعديل اسم مؤسسة',currentUser:loggedInUser,oldName:plan.oldName,newName:plan.newName,academicYear:plan.year||'كل الأعوام'}};
+        const backup={app:'منظومة إصدار الوثائق - مكتب الامتحانات سلوق',version:'5.0',exportDate:now,totalStudents:records.length,students:records,auditLogs:logs,meta:{reason:operation==='merge'?'قبل دمج أسماء مؤسسات':'قبل تعديل اسم مؤسسة',operation,currentUser:loggedInUser,oldName:plan.oldName,newName:plan.newName,academicYear:plan.year||'كل الأعوام'}};
         tx.objectStore('settings').put({key:INSTITUTION_BACKUP_KEY,value:backup});
         for(const st of targets)store.put({...st,school:plan.newName});
-        tx.objectStore('audit_logs').add({action:'تعديل اسم مؤسسة',details:pdfEscape(`تعديل اسم المؤسسة من «${plan.oldName}» إلى «${plan.newName}» في ${plan.year||'كل الأعوام'}؛ تحديث ${targets.length} سجل مع حفظ نسخة احتياطية.`),type:'edit',user:loggedInUser,timestamp:now,formattedTime:new Date(now).toLocaleString('ar-LY')});
-        result={count:targets.length,backup,students:records.map(st=>targets.includes(st)?{...st,school:plan.newName}:st)};
+        tx.objectStore('audit_logs').add({action:operation==='merge'?'دمج أسماء مؤسسات':'تعديل اسم مؤسسة',details:pdfEscape(`${operation==='merge'?'دمج اسم المؤسسة':'تعديل اسم المؤسسة'} من «${plan.oldName}» إلى «${plan.newName}» في ${plan.year||'كل الأعوام'}؛ تحديث ${targets.length} سجل مع حفظ نسخة احتياطية.${operation==='merge'?' إجمالي سجلات الاسم الموحّد بعد الدمج في كل الأعوام: '+(targets.length+destination.length)+'.':''}`),type:'edit',user:loggedInUser,timestamp:now,formattedTime:new Date(now).toLocaleString('ar-LY')});
+        const targetIds=new Set(targets.map(st=>st.id));
+        result={count:targets.length,combinedCount:targets.length+destination.length,backup,students:records.map(st=>targetIds.has(st.id)?{...st,school:plan.newName}:st)};
       }catch(error){failure=error;tx.abort();}
     }
   });
@@ -6007,10 +6052,11 @@ async function saveInstitutionRename(event){
     let refreshFailed=false;
     try{await refreshInstitutionViews(plan);}catch(error){refreshFailed=true;}
     institutionRenameSnapshot=refreshFailed?result.students:studentsCache.slice();
+    refreshInstitutionNameSuggestions();
     onInstitutionYearChange(plan.newName);
-    institutionStatus(`تم تعديل اسم المؤسسة في ${result.count} سجل بنجاح. يمكنك تنزيل نسخة البيانات قبل التعديل.${refreshFailed?' أعد فتح سجل الطلبة لتحديث العرض.':''}`,'success');
+    institutionStatus(`${plan.operation==='merge'?`تم دمج الاسم «${plan.oldName}» تحت «${plan.newName}» بنجاح. تم تحديث ${result.count} سجل، وأصبح إجمالي سجلات الاسم الموحّد ${result.combinedCount}.`:`تم تعديل اسم المؤسسة في ${result.count} سجل بنجاح.`} يمكنك تنزيل نسخة البيانات قبل ${plan.operation==='merge'?'الدمج':'التعديل'}.${refreshFailed?' أعد فتح سجل الطلبة لتحديث العرض.':''}`,'success');
   }catch(error){
-    try{institutionRenameSnapshot=await idbGetAll('students');}catch(_){}
+    try{institutionRenameSnapshot=await idbGetAll('students');refreshInstitutionNameSuggestions();}catch(_){}
     institutionStatus(error.message||'تعذّر حفظ التعديل. لم تتغير البيانات.');
   }finally{
     institutionRenameSaving=false;
