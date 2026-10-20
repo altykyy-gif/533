@@ -1,5 +1,5 @@
 'use strict';
-const APP_VERSION='2026.10.20-f77d028a83ae';
+const APP_VERSION='2026.10.20-4cc76b21e6cb';
 const CACHE_PREFIX='suluq-exam-documents:'+self.registration.scope+':';
 const CACHE_NAME=CACHE_PREFIX+APP_VERSION;
 const APP_FILES=[
