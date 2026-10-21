@@ -2154,6 +2154,17 @@
     }
   </style>
 <style>
+#reports-summary{padding:0 20px 16px;color:var(--text-muted);font-size:.86rem;line-height:1.9}
+.report-average-note{display:block;font-size:.73rem;color:var(--text-muted);white-space:normal}
+@media print{
+  body.printing-top-ten #top-ten-print,body.printing-top-ten .top-ten-print-page{width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;page-break-after:auto!important;break-inside:auto!important;page-break-inside:auto!important}
+  body.printing-top-ten .top-ten-print-page{padding:0!important;box-shadow:none!important}
+  body.printing-top-ten .top-ten-print-table thead{display:table-header-group!important}
+  body.printing-top-ten .top-ten-print-table tr,body.printing-top-ten .top-ten-gov-head,body.printing-top-ten .top-ten-meta-row,body.printing-top-ten .top-ten-print-footer{break-inside:avoid!important;page-break-inside:avoid!important}
+}
+
+</style>
+<style>
 #institution-manage-button[hidden],#institution-backup-button[hidden],#institution-status[hidden]{display:none!important}
 #section-students-list>.panel-card>.panel-header>div:last-child{flex-wrap:wrap}
 .institution-panel{width:min(650px,100%);padding:24px;border-radius:18px;background:var(--card-bg);color:var(--text-main);max-height:calc(100dvh - 40px);overflow-y:auto;box-shadow:0 20px 70px #0004}
@@ -2951,6 +2962,7 @@
               <button class="btn btn-secondary" onclick="renderReports()"><i class="fa-solid fa-filter"></i> تطبيق الفلاتر</button>
             </div>
           </div>
+          <p id="reports-summary" role="status" aria-live="polite"></p>
           <div class="report-grid">
             <div class="panel-card"><div class="panel-header"><div class="panel-title"><i class="fa-solid fa-ranking-star"></i><span>توزيع التقديرات</span></div></div><div id="grade-report-chart" class="bar-chart"></div></div>
             <div class="panel-card"><div class="panel-header"><div class="panel-title"><i class="fa-solid fa-school"></i><span>أداء المدارس</span></div></div><div id="school-report-chart" class="bar-chart"></div></div>
@@ -5085,10 +5097,9 @@
       box.innerHTML=`<div class="verify-ok"><h3 style="margin-bottom:10px;">✓ الوثيقة صحيحة ومسجلة</h3><div class="form-grid"><div><strong>الطالب:</strong> ${st.name||rec.studentName||'-'}</div><div><strong>رقم القيد:</strong> ${st.regNo||rec.regNo||'-'}</div><div><strong>رقم الجلوس:</strong> ${st.seatNo||rec.seatNo||'-'}</div><div><strong>رقم الوثيقة:</strong> ${st.recordNo||rec.recordNo||'-'}</div><div><strong>النسبة:</strong> ${st.percentage!=null?Number(st.percentage).toFixed(2)+'%':'-'}</div><div><strong>التقدير:</strong> ${st.appreciation||'-'}</div><div><strong>النموذج:</strong> ${rec.model||'-'}</div><div><strong>تاريخ الإصدار:</strong> ${new Date(rec.issuedAt).toLocaleString('ar-LY')}</div></div></div>`;
     }
 
-    function gradeLabel(s){return String(s.appreciation||'').replace('جيد جدا','جيد جداً').trim();}
+    function gradeLabel(s){return reportGradeLabel(s.appreciation);}
     function reportFilteredData(){
-      const y=document.getElementById('report-year')?.value||'', c=document.getElementById('report-cert')?.value||'', r=document.getElementById('report-round')?.value||'', sc=document.getElementById('report-school')?.value||'', sec=document.getElementById('report-section')?.value||'';
-      return studentsCache.filter(s=>(!y||s.academicYear===y)&&(!c||s.certType===c)&&(!r||s.round===r)&&(!sc||s.school===sc)&&(!sec||String(s.section||'')===sec));
+      return filteredReportRecords();
     }
     function uniqueVals(field){return [...new Set(studentsCache.map(s=>String(s[field]||'').trim()).filter(Boolean))].sort();}
     function fillSelect(id,values,first){const el=document.getElementById(id);if(!el)return;const old=el.value;el.innerHTML=`<option value="">${first}</option>`;values.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;el.appendChild(o)});if(values.includes(old))el.value=old;}
@@ -5119,26 +5130,14 @@
       if(page){page.style.setProperty('--top-ten-print-font',"'Cairo', sans-serif");page.style.setProperty('--top-ten-print-size','12px');page.style.fontFamily="'Cairo', sans-serif";page.style.fontSize='12px';page.querySelectorAll('*').forEach(el=>el.style.fontFamily="'Cairo', sans-serif");}
     }
     function renderReports(){
-      const data=reportFilteredData(); const grades=['ممتاز','جيد جداً','جيد','مقبول'];
-      const gc=document.getElementById('grade-report-chart'); const counts=grades.map(g=>data.filter(s=>gradeLabel(s)===g).length); const max=Math.max(1,...counts);
-      const gradeColors=['#16a34a','#2563eb','#f59e0b','#ef4444'];
-      gc.innerHTML=grades.map((g,i)=>`<div class="bar-row"><span>${g}</span><div class="bar-track"><div class="bar-fill" style="width:${counts[i]/max*100}%;background:${gradeColors[i]} !important;"></div></div><strong>${counts[i]}</strong></div>`).join('');
-      const schools={};data.forEach(s=>{const k=s.school||'غير محددة';(schools[k]??=[]).push(Number(s.percentage)||0)});
-      const schoolRows=Object.entries(schools).map(([school,a])=>({school,n:a.length,avg:a.reduce((x,y)=>x+y,0)/a.length})).sort((x,y)=>y.avg-x.avg); const sm=Math.max(1,...schoolRows.map(x=>x.avg));
-      const schoolColors=['#2563eb','#059669','#d97706','#7c3aed','#dc2626','#0891b2','#db2777','#65a30d','#ea580c','#4f46e5'];
-      document.getElementById('school-report-chart').innerHTML=schoolRows.length?schoolRows.map((x,i)=>`<div class="bar-row"><span>${i+1}. ${x.school}</span><div class="bar-track"><div class="bar-fill" style="width:${x.avg/sm*100}%;background:${schoolColors[i%schoolColors.length]} !important;"></div></div><strong>${x.avg.toFixed(2)}%</strong></div>`).join(''):'<div style="padding:20px;text-align:center;">لا توجد بيانات.</div>';
-      const topTies=calculateTopTenResults(data);
-      document.getElementById('top-ten-body').innerHTML=topTenRowsHTML(topTies,true);
-      updateTopTenSummary(data,topTies);
-      const years={};data.forEach(s=>{const y=s.academicYear||'غير محدد';years[y]??=[];years[y].push(s)});const yearEntries=Object.entries(years).sort(([a],[b])=>a.localeCompare(b));
-      document.getElementById('year-report-body').innerHTML=yearEntries.map(([y,a])=>{const cs=grades.map(g=>a.filter(s=>gradeLabel(s)===g).length);const av=a.length?a.reduce((z,s)=>z+(Number(s.percentage)||0),0)/a.length:0;return `<tr><td>${y}</td><td>${a.length}</td><td>${cs[0]}</td><td>${cs[1]}</td><td>${cs[2]}</td><td>${cs[3]}</td><td>${av.toFixed(2)}%</td></tr>`}).join('')||'<tr><td colspan="7" style="text-align:center;padding:20px;">لا توجد بيانات.</td></tr>';
-      document.getElementById('year-report-chart').innerHTML=yearEntries.map(([y,a])=>{const cs=grades.map(g=>a.filter(s=>gradeLabel(s)===g).length);const total=Math.max(1,a.length);return `<div class="year-row"><strong>${y}</strong><div class="year-stack"><span class="grade-excellent" style="width:${cs[0]/total*100}%"></span><span class="grade-vgood" style="width:${cs[1]/total*100}%"></span><span class="grade-good" style="width:${cs[2]/total*100}%"></span><span class="grade-pass" style="width:${cs[3]/total*100}%"></span></div><strong>${a.length} طالب</strong></div>`}).join('')||'<div style="padding:20px;text-align:center;">لا توجد بيانات.</div>';
-      applyTopTenPreviewFont();
+      return renderReportsDashboard();
     }
     function exportReportsToExcel(){
-      if(typeof XLSX==='undefined'){alert('مكتبة Excel غير متاحة.');return;} const data=reportFilteredData(); const rows=data.map((s,i)=>({الترتيب:i+1,الطالب:s.name,المدرسة:s.school,القيد:s.regNo,الجلوس:s.seatNo,الشهادة:s.certType,الدور:s.round,العام:s.academicYear,النسبة:Number(s.percentage)||0,التقدير:gradeLabel(s)})); const ws=XLSX.utils.json_to_sheet(rows); const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'التقرير');XLSX.writeFile(wb,'تقرير_الإحصاءات_سلوق.xlsx'); logOperation('تصدير تقرير Excel',`تم تصدير تقرير إحصائي لعدد ${data.length} طالبًا`,'export');
+      return exportReportWorkbook();
     }
     function printTopTenReport(){
+      refreshReportFilterOptions();
+      document.getElementById('dynamic-page-print-style').textContent='@page { size: A4 portrait; margin: 8mm 10mm; }';
       const rows=calculateTopTenResults(reportFilteredData());
       applyTopTenPreviewFont();
       document.getElementById('top-ten-print-meta').textContent=`عدد الطلبة في القائمة: ${rows.length}`;
@@ -6110,6 +6109,100 @@ function updateTopTenSummary(records,rows){
   const filters=[['report-year','العام'],['report-cert','الشهادة'],['report-round','الدور'],['report-school','المؤسسة'],['report-section','القسم']]
     .map(([id,label])=>{const value=document.getElementById(id)?.value;return value?label+': '+value:'';}).filter(Boolean);
   summary.textContent=`عدد النتائج ضمن الفلاتر: ${records.length}، وعدد النتائج في قائمة الأوائل: ${rows.length}. الترتيب حسب أعلى عشر نسب مختلفة؛ المتساوون في النسبة في المركز نفسه.${invalid?' هناك '+invalid+' سجل بلا نسبة صالحة للترتيب.':''} ${filters.length?'الفلاتر: '+filters.join(' — '):'النطاق: كل الأعوام والشهادات والأدوار والمؤسسات والأقسام.'}`;
+}
+
+/* Shared, read-only report calculations. Stored grades and student data are never rewritten. */
+const REPORT_GRADES=[
+  {label:'ممتاز',color:'#16a34a',className:'grade-excellent'},
+  {label:'جيد جداً',color:'#2563eb',className:'grade-vgood'},
+  {label:'جيد',color:'#f59e0b',className:'grade-good'},
+  {label:'مقبول',color:'#ef4444',className:'grade-pass'}
+];
+const REPORT_OTHER_GRADE={label:'أخرى / غير مسجّل',color:'#64748b',className:'grade-other'};
+const REPORT_GRADE_NAMES=new Map([['ممتاز','ممتاز'],['جيدجدا','جيد جداً'],['جيد','جيد'],['مقبول','مقبول']]);
+function reportText(value){return String(value??'').trim();}
+function reportGradeLabel(raw){
+  const label=reportText(raw);
+  const key=label.normalize('NFKC').replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640\u061c\u200b-\u200f\u2066-\u2069\ufeff]/g,'')
+    .replace(/[أإآٱ]/g,'ا').replace(/ی/g,'ي').replace(/\s+/g,'');
+  return REPORT_GRADE_NAMES.get(key)||label;
+}
+function reportGradeBucket(student){
+  const label=gradeLabel(student);return REPORT_GRADES.some(g=>g.label===label)?label:REPORT_OTHER_GRADE.label;
+}
+function reportStatistics(records){
+  const counts=Object.fromEntries([...REPORT_GRADES,REPORT_OTHER_GRADE].map(g=>[g.label,0]));
+  let sum=0,validCount=0;
+  for(const student of records){
+    counts[reportGradeBucket(student)]++;
+    const percentage=topTenPercentage(student.percentage);
+    if(percentage!==null){sum+=percentage;validCount++;}
+  }
+  return {total:records.length,counts,validCount,invalidCount:records.length-validCount,average:validCount?sum/validCount:null};
+}
+function reportGroups(records,field,missingLabel){
+  const groups=new Map();
+  for(const student of records){const label=reportText(student[field])||missingLabel;if(!groups.has(label))groups.set(label,[]);groups.get(label).push(student);}
+  return [...groups].map(([label,students])=>({label,students,...reportStatistics(students)}));
+}
+function filteredReportRecords(){
+  const filters=[['report-year','academicYear'],['report-cert','certType'],['report-round','round'],['report-school','school'],['report-section','section']]
+    .map(([id,field])=>[field,document.getElementById(id)?.value||'']).filter(([,value])=>value);
+  return studentsCache.filter(student=>filters.every(([field,value])=>reportText(student[field])===value));
+}
+function refreshReportFilterOptions(){
+  const year=document.getElementById('report-year').value,cert=document.getElementById('report-cert').value;
+  const yearRecords=studentsCache.filter(st=>!year||reportText(st.academicYear)===year);
+  const context=yearRecords.filter(st=>!cert||reportText(st.certType)===cert);
+  const values=(records,field)=>[...new Set(records.map(st=>reportText(st[field])).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+  fillSelect('report-school',values(yearRecords,'school'),'كل المدارس');
+  fillSelect('report-round',values(context,'round'),'كل الأدوار');
+  fillSelect('report-section',values(context,'section'),'كل الأقسام');
+}
+populateReportFilters=function(){
+  fillSelect('report-year',[...new Set(studentsCache.map(st=>reportText(st.academicYear)).filter(Boolean))].sort(),'كل الأعوام');
+  refreshReportFilterOptions();
+};
+onReportYearChange=function(){renderReports();};
+function reportAverageText(stats){return stats.average===null?'غير متاح':stats.average.toFixed(2)+'%';}
+function renderReportsDashboard(){
+  refreshReportFilterOptions();
+  const data=reportFilteredData(),stats=reportStatistics(data);
+  const grades=stats.counts[REPORT_OTHER_GRADE.label]?[...REPORT_GRADES,REPORT_OTHER_GRADE]:REPORT_GRADES;
+  const summary=document.getElementById('reports-summary');
+  if(summary)summary.textContent=data.length?`عدد النتائج: ${stats.total}. نسب صالحة لحساب المتوسط: ${stats.validCount}. المتوسط العام: ${reportAverageText(stats)}.${stats.invalidCount?' نسب غير مسجّلة أو غير صالحة: '+stats.invalidCount+'.':''}${stats.counts[REPORT_OTHER_GRADE.label]?' تقديرات أخرى أو غير مسجّلة: '+stats.counts[REPORT_OTHER_GRADE.label]+'.':''} تُحسب المتوسطات من النسب الصالحة فقط، ويُحتسب الصفر المسجّل كنسبة فعلية.`:'لا توجد نتائج مطابقة للفلاتر المختارة.';
+  const max=Math.max(1,...grades.map(g=>stats.counts[g.label]));
+  document.getElementById('grade-report-chart').innerHTML=grades.map(g=>`<div class="bar-row"><span>${g.label}</span><div class="bar-track"><div class="bar-fill" style="width:${stats.counts[g.label]/max*100}%;background:${g.color} !important;"></div></div><strong>${stats.counts[g.label]}</strong></div>`).join('');
+  const schools=reportGroups(data,'school','غير محددة').sort((a,b)=>{
+    if(a.average===null&&b.average!==null)return 1;if(a.average!==null&&b.average===null)return -1;
+    return (b.average??0)-(a.average??0)||a.label.localeCompare(b.label,'ar');
+  });
+  const schoolMax=Math.max(1,...schools.map(s=>s.average??0));
+  const schoolColors=['#2563eb','#059669','#d97706','#7c3aed','#dc2626','#0891b2','#db2777','#65a30d','#ea580c','#4f46e5'];
+  document.getElementById('school-report-chart').innerHTML=schools.length?schools.map((s,i)=>`<div class="bar-row"><span title="عدد السجلات: ${s.total}؛ نسب صالحة: ${s.validCount}">${i+1}. ${pdfEscape(s.label)}</span><div class="bar-track"><div class="bar-fill" style="width:${(s.average??0)/schoolMax*100}%;background:${schoolColors[i%schoolColors.length]} !important;"></div></div><strong>${reportAverageText(s)}</strong></div>`).join(''):'<div style="padding:20px;text-align:center;">لا توجد بيانات.</div>';
+  const top=calculateTopTenResults(data);document.getElementById('top-ten-body').innerHTML=topTenRowsHTML(top,true);updateTopTenSummary(data,top);
+  const years=reportGroups(data,'academicYear','غير محدد').sort((a,b)=>a.label.localeCompare(b.label,'ar'));
+  const body=document.getElementById('year-report-body'),head=body.closest('table').tHead;
+  head.innerHTML='<tr><th>العام</th><th>عدد الطلبة</th>'+grades.map(g=>'<th>'+g.label+'</th>').join('')+'<th>متوسط النسبة</th></tr>';
+  body.innerHTML=years.length?years.map(y=>`<tr><td>${pdfEscape(y.label)}</td><td>${y.total}</td>${grades.map(g=>'<td>'+y.counts[g.label]+'</td>').join('')}<td>${reportAverageText(y)}${y.invalidCount?'<small class="report-average-note">من '+y.validCount+' نسبة صالحة</small>':''}</td></tr>`).join(''):`<tr><td colspan="${grades.length+3}" style="text-align:center;padding:20px;">لا توجد بيانات.</td></tr>`;
+  document.getElementById('year-report-chart').innerHTML=years.length?years.map(y=>`<div class="year-row"><strong>${pdfEscape(y.label)}</strong><div class="year-stack">${grades.map(g=>`<span class="${g.className}" title="${g.label}: ${y.counts[g.label]}" style="width:${y.counts[g.label]/y.total*100}%;background:${g.color};"></span>`).join('')}</div><strong>${y.total} طالب</strong></div>`).join(''):'<div style="padding:20px;text-align:center;">لا توجد بيانات.</div>';
+  applyTopTenPreviewFont();
+}
+function exportReportWorkbook(){
+  if(typeof XLSX==='undefined'){alert('مكتبة Excel غير متاحة.');return;}
+  refreshReportFilterOptions();
+  const data=reportFilteredData(),stats=reportStatistics(data),wb=XLSX.utils.book_new();
+  const add=(name,rows,headers)=>{const ws=XLSX.utils.json_to_sheet(rows,{header:headers});ws['!cols']=headers.map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,name);};
+  add('التقرير',data.map((s,i)=>({'م':i+1,'الطالب':s.name,'المدرسة':reportText(s.school),'القيد':s.regNo,'الجلوس':s.seatNo,'الشهادة':s.certType,'القسم':s.section,'الدور':s.round,'العام':reportText(s.academicYear),'النسبة':topTenPercentage(s.percentage)??'','التقدير':gradeLabel(s)||'غير مسجّل'})),['م','الطالب','المدرسة','القيد','الجلوس','الشهادة','القسم','الدور','العام','النسبة','التقدير']);
+  const grades=stats.counts[REPORT_OTHER_GRADE.label]?[...REPORT_GRADES,REPORT_OTHER_GRADE]:REPORT_GRADES;
+  add('توزيع التقديرات',grades.map(g=>({'التقدير':g.label,'العدد':stats.counts[g.label]})),['التقدير','العدد']);
+  const groupedRows=(field,missing,label)=>reportGroups(data,field,missing).sort((a,b)=>a.label.localeCompare(b.label,'ar')).map(g=>({[label]:g.label,'عدد الطلبة':g.total,...Object.fromEntries(grades.map(grade=>[grade.label,g.counts[grade.label]])),'نسب صالحة':g.validCount,'نسب غير صالحة':g.invalidCount,'متوسط النسبة':g.average??''}));
+  const summaryHeaders=label=>[label,'عدد الطلبة',...grades.map(g=>g.label),'نسب صالحة','نسب غير صالحة','متوسط النسبة'];
+  add('أداء المؤسسات',groupedRows('school','غير محددة','المؤسسة'),summaryHeaders('المؤسسة'));
+  add('مقارنة الأعوام',groupedRows('academicYear','غير محدد','العام'),summaryHeaders('العام'));
+  add('الأوائل',calculateTopTenResults(data).map(({student:s,percentage,rank})=>({'المركز':rank,'الطالب':s.name,'المدرسة':reportText(s.school),'الشهادة':s.certType,'القسم':s.section,'الدور':s.round,'العام':reportText(s.academicYear),'النسبة':percentage,'التقدير':gradeLabel(s)||'غير مسجّل'})),['المركز','الطالب','المدرسة','الشهادة','القسم','الدور','العام','النسبة','التقدير']);
+  XLSX.writeFile(wb,'تقرير_الإحصاءات_سلوق.xlsx');
+  logOperation('تصدير تقرير Excel',`تم تصدير تقرير إحصائي لعدد ${data.length} نتيجة مع توزيع التقديرات ومتوسطات المؤسسات والأعوام وقائمة الأوائل.`,'export');
 }
 
 </script>
